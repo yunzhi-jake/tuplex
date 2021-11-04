@@ -25,6 +25,7 @@ namespace tuplex {
         WITHCOLUMN,
         FILEOUTPUT, // output to file
         JOIN,
+        GROUPBY,
         AGGREGATE,
         CACHE // i.e. to materialize intermediates & reuse partitions
     };
