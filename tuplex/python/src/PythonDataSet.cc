@@ -481,6 +481,102 @@ namespace tuplex {
         return pds;
     }
 
+    PythonDataSet PythonDataSet::groupBy(boost::python::list columnsToGroupBy) {
+        // check dataset is valid & perform error check.
+        assert(this->_dataset);
+        if (_dataset->isError()) {
+            PythonDataSet pds;
+            pds.wrap(this->_dataset);
+            return pds;
+        }
+
+        // empty?
+        if(_dataset->isEmpty()) {
+            PythonDataSet pds;
+            pds.wrap(this->_dataset);
+            return pds;
+        }
+
+        // there are two possible modes how list can be given:
+        // 1.) selection using positive integers
+        // 2.) via strings
+        // ==> mixture also ok...
+        auto rowType = _dataset->schema().getRowType();
+        assert(rowType.isTupleType());
+        auto num_cols = rowType.parameters().size();
+
+        // go through list
+        // ==> Tuplex supports list and integer indices which may be mixed up even!
+        std::vector<std::size_t> columnIndices;
+        auto columns = _dataset->columns();
+
+        PyObject * listObj = columnsToGroupBy.ptr();
+        for (unsigned i = 0; i < boost::python::len(columnsToGroupBy); ++i) {
+            PyObject * obj = PyList_GetItem(listObj, i);
+            Py_XINCREF(obj);
+            // check type:
+            if (PyObject_IsInstance(obj, reinterpret_cast<PyObject *>(&PyLong_Type))) {
+                int index = boost::python::extract<int>(columnsToGroupBy[i]);
+
+                // adjust negative index!
+                int adjIndex = index < 0 ? index + num_cols : index;
+
+                if (adjIndex < 0 || adjIndex >= num_cols) {
+                    throw std::runtime_error("invalid index " + std::to_string(index)
+                                             + " found, has to be -" + std::to_string(num_cols)
+                                             + ",...0,...," + std::to_string(num_cols - 1));
+                }
+                assert(0 <= adjIndex && adjIndex < num_cols);
+
+                columnIndices.push_back(static_cast<size_t>(adjIndex));
+            } else if (PyObject_IsInstance(obj, reinterpret_cast<PyObject *>(&PyUnicode_Type))) {
+                std::string col_name = python::PyString_AsString(obj);
+                // search columns
+                if (columns.empty())
+                    throw std::runtime_error("trying to group on column '" + col_name + "', but no column names defined");
+
+                // search for column to convert to index
+                int idx = indexInVector(col_name, columns);
+                if (idx < 0) {
+                    std::stringstream ss;
+                    ss << "could not find column '" + col_name + "' in columns " << columns;
+                    throw std::runtime_error(ss.str());
+                }
+                columnIndices.push_back(static_cast<size_t>(idx));
+            } else {
+                throw std::runtime_error("group by only accepts integers or strings as columns!");
+            }
+        }
+
+        PythonDataSet pds;
+        // GIL release & reacquire
+        assert(PyGILState_Check()); // make sure this thread holds the GIL!
+        python::unlockGIL();
+        DataSet *ds = nullptr;
+        std::string err_message = "";
+        try {
+            ds = &_dataset->groupBy(columnIndices);
+        } catch(const std::exception& e) {
+            err_message = e.what();
+            Logger::instance().defaultLogger().error(err_message);
+        } catch(...) {
+            err_message = "unknown C++ exception occurred, please change type.";
+            Logger::instance().defaultLogger().error(err_message);
+        }
+
+        python::lockGIL();
+
+        // nullptr? then error dataset!
+        if(!ds || !err_message.empty()) {
+            Logger::instance().flushAll();
+            assert(_dataset->getContext());
+            ds = &_dataset->getContext()->makeError(err_message);
+        }
+        pds.wrap(ds);
+        Logger::instance().flushAll();
+        return pds;
+    }
+
 
     PythonDataSet PythonDataSet::withColumn(const std::string &column, const std::string &lambda_code,
                                             const std::string &pickled_code, PyObject* closureObject) {

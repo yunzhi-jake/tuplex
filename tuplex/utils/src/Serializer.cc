@@ -619,6 +619,10 @@ namespace tuplex {
                     *((uint8_t *) _varLenFields.ptr() + slen) = 0;
                     _varLenFields.movePtr(slen + 1);
                 }
+            } else if (elementType.isTupleType()) {
+                if(elementType.isFixedSizeType()) {
+
+                }
             } else { // ints/floats/bools
                 // values
                 for(size_t i = 0; i < l.numElements(); i++) {
@@ -1083,6 +1087,18 @@ namespace tuplex {
                     auto str_offset = *(int64_t *) ptr;
                     els.push_back(Field((const char *) (ptr + str_offset)));
                     ptr += sizeof(uint64_t);
+                }
+            } else if (elType.isTupleType()) {
+                // read each tuple
+                if (elType.isFixedSizeType()) {
+                    for (int i = 0; i < num_elements; i++) {
+
+                        els.push_back(Field())
+                    }
+                } else {
+                    for (int i = 0; i < num_elements; i++) {
+                        auto
+                    }
                 }
             } else {
                 // read each value

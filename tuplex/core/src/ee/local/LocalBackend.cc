@@ -146,6 +146,8 @@ namespace tuplex {
             executeHashJoinStage(dynamic_cast<HashJoinStage*>(stage));
         } else if(dynamic_cast<AggregateStage*>(stage)) {
             executeAggregateStage(dynamic_cast<AggregateStage*>(stage));
+        } else if(dynamic_cast<GroupByStage*>(stage)) {
+            executeGroupByStage(dynamic_cast<GroupByStage*>(stage));
         } else
             throw std::runtime_error("unknown stage encountered in local backend!");
 
@@ -1134,6 +1136,125 @@ namespace tuplex {
         std::stringstream ss;
         ss<<"[Transform Stage] Stage "<<tstage->number()<<" took "<<stageTimer.time()<<"s";
         Logger::instance().defaultLogger().info(ss.str());
+    }
+
+    void LocalBackend::executeGroupByStage(GroupByStage *gbstage) {
+        using namespace std;
+        assert(gbstage);
+
+        auto rs = gbstage->predecessors()[0]->resultSet(); assert(rs);
+        Timer timer;
+
+        auto executor = driver();
+        auto partitions = rs->partitions();
+        auto schema = rs->schema();
+        auto rowType = schema.getRowType();
+        auto columnIndicesToGroupBy = gbstage->getColumnIndicesToGroupBy();
+        auto numKeys = columnIndicesToGroupBy.size();
+        auto numValues = rowType.parameters().size() - numKeys;
+        std::vector<size_t> valueIndices;
+        for (size_t index = 0; index < rowType.parameters().size(); ++index) {
+            if(std::find(columnIndicesToGroupBy.begin(), columnIndicesToGroupBy.end(), index) == columnIndicesToGroupBy.end()) {
+                valueIndices.push_back(index);
+            }
+        }
+
+        // global map
+        std::unordered_map<std::string, std::vector<Field>> groupByMap;
+        std::unordered_map<std::string, std::vector<Field>> strToFieldMap;
+        for (auto & partition : partitions) {
+            // groupBy on single partition
+            std::unordered_map<std::string, std::vector<Field>> currPartitionMap;
+
+            const uint8_t* ptr = partition->lockRaw();
+            assert(ptr);
+            int64_t numRows = *((int64_t*)ptr);
+            ptr += sizeof(int64_t);
+            size_t bytesRead = 0;
+            for (int i = 0; i < numRows; ++i) {
+                Row row = Row::fromMemory(schema, ptr, partition->capacity() - bytesRead);
+
+                std::vector<Field> keyFields(numKeys);
+                for (size_t j = 0; j < numKeys; ++j) {
+                    keyFields[j] = row.get(columnIndicesToGroupBy[j]);
+                }
+                auto keyTuple = Tuple::from_vector(keyFields);
+                std::string currKey = keyTuple.desc();
+                if(strToFieldMap.find(currKey) == strToFieldMap.end()) {
+                    strToFieldMap[currKey] = keyFields;
+                }
+
+                Field currValueField;
+                if(numValues == 1) {
+                    currValueField = row.get(valueIndices.front());
+                } else {
+                    std::vector<Field> currValueFields(numValues);
+                    for (size_t k = 0; k < numValues; ++k) {
+                        currValueFields[k] = row.get(valueIndices[k]);
+                    }
+                    currValueField = Field(Tuple::from_vector(currValueFields));
+                }
+
+                if (currPartitionMap.find(currKey) == currPartitionMap.end()) {
+                    currPartitionMap[currKey] = {currValueField};
+                } else {
+                    currPartitionMap[currKey].push_back(currValueField);
+                }
+
+                ptr += row.serializedLength();
+                bytesRead += row.serializedLength();
+            }
+            if(groupByMap.empty()) {
+                groupByMap = currPartitionMap;
+            } else {
+                // merge current map with global map, concatenate values that have the same key
+                for (const auto & currPair : currPartitionMap) {
+                    if(groupByMap.find(currPair.first) == groupByMap.end()) {
+                        groupByMap[currPair.first] = currPair.second;
+                    } else {
+                        groupByMap[currPair.first].insert(groupByMap[currPair.first].end(), currPair.second.begin(), currPair.second.end());
+                    }
+                }
+            }
+            partition->unlock();
+        }
+
+        for (const auto & currPair : groupByMap) {
+            std::cout << currPair.first << std::endl;
+        }
+
+        std::vector<python::Type> newRowType(numKeys + 1);
+        auto rowTypeVector = rowType.parameters();
+        for (size_t i = 0; i < numKeys; ++i) {
+            newRowType[i] = rowTypeVector[columnIndicesToGroupBy[i]];
+        }
+        python::Type valueType;
+        if((numValues) == 1) {
+            valueType = python::Type::makeListType(rowTypeVector[valueIndices.front()]);
+        } else {
+            std::vector<python::Type> valueTypeVector(numValues);
+            for (size_t i = 0; i < numValues; ++i) {
+                valueTypeVector[i] = rowTypeVector[valueIndices[i]];
+            }
+            valueType = python::Type::makeListType(python::Type::makeTupleType(valueTypeVector));
+        }
+
+        newRowType.back() = valueType;
+        auto newSchema = Schema(Schema::MemoryLayout::ROW, python::Type::makeTupleType(newRowType));
+
+        tuplex::PartitionWriter pw(executor, newSchema, gbstage->outputDataSetID(), _options.PARTITION_SIZE());
+        for (const auto & currRowPair : groupByMap) {
+            std::vector<Field> currRowVec = strToFieldMap[currRowPair.first];
+            auto valueList = Field(List::from_vector(currRowPair.second));
+            currRowVec.push_back(valueList);
+            auto currRow = Row::from_vector(currRowVec);
+            pw.writeRow(currRow);
+        }
+
+        std::stringstream ss;
+        ss << "finished groupBy stage " << gbstage->number() << " in " << timer.time() << "s";
+        Logger::instance().defaultLogger().info(ss.str());
+        gbstage->setResultSet(std::make_shared<ResultSet>(newSchema, pw.getOutputPartitions()));
     }
 
     std::vector<IExecutorTask*> LocalBackend::resolveViaSlowPath(

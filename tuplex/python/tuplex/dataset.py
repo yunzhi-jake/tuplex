@@ -565,3 +565,40 @@ class DataSet:
 
         """
         return self._dataSet.exception_counts()
+
+    def groupBy(self, columns):
+        """
+        Args:
+            columns: A list of strings (column names) or integers (column indices) indicating the key column or columns to group by.
+            Indices can be negative integers.
+        Returns:
+            Dataset where each row is a tuple of (key_value(, key_value)*, [rows with key values in key columns])
+            Example:
+                For a dataset
+                +------+------+------+
+                | colA | colB | colC |
+                +------+------+------+
+                | 1    | 2    | 1    |
+                +------+------+------+
+                | 1    | 2    | 2    |
+                +------+------+------+
+                | 2    | 2    | 3    |
+                +------+------+------+
+                groupBy(['colA', 'colB']).collect() gives [(1, 2, [1, 2]), (2, 2, [3])]
+        """
+
+        assert self._dataSet is not None, 'internal API error, datasets must be created via context object'
+
+        # syntactic sugar, allow single column, list, tuple, ...
+        if isinstance(columns, (str, int)):
+            columns = [columns]
+        if isinstance(columns, tuple):
+            columns = list(columns)
+        assert(isinstance(columns, list))
+
+        for el in columns:
+            assert isinstance(el, (str, int)), 'element {} must be a string or int'.format(el)
+
+        ds = DataSet()
+        ds._dataSet = self._dataSet.groupBy(columns)
+        return ds

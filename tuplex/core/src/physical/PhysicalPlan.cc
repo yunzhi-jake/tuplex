@@ -12,6 +12,7 @@
 #include <physical/TransformStage.h>
 #include <physical/HashJoinStage.h>
 #include <physical/AggregateStage.h>
+#include <physical/GroupByStage.h>
 #include <physical/StageBuilder.h>
 #include <logical/ParallelizeOperator.h>
 #include <logical/FileInputOperator.h>
@@ -24,6 +25,7 @@
 #include <logical/JoinOperator.h>
 #include <logical/AggregateOperator.h>
 #include <logical/CacheOperator.h>
+#include <logical/GroupByOperator.h>
 #include <RuntimeInterface.h>
 #include <Signals.h>
 
@@ -112,6 +114,13 @@ namespace tuplex {
                     } else {
                         throw std::runtime_error("unsupported aggregate type found");
                     }
+                } else if(node->type() == LogicalOperatorType::GROUPBY) {
+                    auto gop = dynamic_cast<GroupByOperator*>(node); assert(gop);
+                    auto pred = createStage(gop->parent(), gop, false, EndPointMode::MEMORY);
+                    auto stage = new GroupByStage(this, backend(), _num_stages++, gop->getColumnIndicesToGroupBy());
+                    dependents.emplace_back(stage);
+                    stage->dependOn(pred);
+                    continue;
                 } else { // follow tree
                     q.push(node->parent());
                 }

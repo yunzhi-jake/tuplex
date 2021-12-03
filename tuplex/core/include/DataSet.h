@@ -207,6 +207,13 @@ namespace tuplex {
         virtual DataSet& aggregateByKey(const UDF& aggCombine, const UDF& aggUDF, const Row& aggInitial, const std::vector<std::string> &keyColumns);
 
         /*!
+         * group rows based on columns provided in columnIndices
+         * @param columnIndices
+         * @return Dataset
+         */
+        virtual DataSet& groupBy(const std::vector<size_t> &columnIndices);
+
+        /*!
          * return column names of dataset
          * @return
          */

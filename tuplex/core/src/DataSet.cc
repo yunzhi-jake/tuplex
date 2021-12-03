@@ -19,6 +19,7 @@
 #include <logical/FileOutputOperator.h>
 #include <logical/JoinOperator.h>
 #include <logical/AggregateOperator.h>
+#include <logical/GroupByOperator.h>
 #include <logical/CacheOperator.h>
 #include <physical/ResultSet.h>
 #include <Utils.h>
@@ -721,6 +722,51 @@ namespace tuplex {
         // b.c. this is a hash-aggregate, column names can be partially preserved
         // set columns (they do not change)
         dsptr->setColumns(op->columns());
+
+        // signal check
+        if(check_and_forward_signals()) {
+#ifndef NDEBUG
+            Logger::instance().defaultLogger().info("received signal handler sig, returning error dataset");
+#endif
+            return _context->makeError("job aborted (signal received)");
+        }
+
+        // !!! never return the pointer above
+        return *op->getDataSet();
+    }
+
+    DataSet & DataSet::groupBy(const std::vector<size_t> &columnIndices){
+        // if error dataset, return itself
+        if(isError())
+            return *this;
+
+        assert(_context);
+        assert(this->_operator);
+
+        if(columnIndices.empty()) {
+            return _context->makeError("must provide at least one column to group by");
+        }
+
+        // check if argument column indices are valid
+        auto num_cols = _operator->getOutputSchema().getRowType().parameters().size();
+        for (auto idx : columnIndices) {
+            if (idx >= num_cols) {
+                return _context->makeError(std::to_string(idx) + " exceeds the maximum column index " + std::to_string(num_cols-1));
+            }
+        }
+
+        LogicalOperator* op = _context->addOperator(new GroupByOperator(this->_operator, columnIndices, _columnNames));
+
+        if (!op->good()) {
+            Logger::instance().defaultLogger().error("failed to create groupBy operator");
+            return _context->makeError("failed to add groupBy operator to logical plan");
+        }
+
+        DataSet *dsptr = _context->createDataSet(op->getOutputSchema());
+        dsptr->_operator = op;
+        // key columns are preserved
+        dsptr->setColumns(op->columns());
+        op->setDataSet(dsptr);
 
         // signal check
         if(check_and_forward_signals()) {

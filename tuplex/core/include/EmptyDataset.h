@@ -65,6 +65,7 @@ namespace tuplex {
         virtual DataSet& unique() override { return *this; }
         virtual DataSet& aggregate(const UDF& aggCombine, const UDF& aggUDF, const Row& aggInitial) override { return *this; }
         virtual DataSet& aggregateByKey(const UDF& aggCombine, const UDF& aggUDF, const Row& aggInitial, const std::vector<std::string> &keyColumns) override { return *this; }
+        virtual DataSet& groupBy(const std::vector<size_t> &columnIndices) override { return *this; }
 
         //virtual void show(const int64_t numRows=-1, std::ostream& os=std::cout) override;
         virtual std::shared_ptr<ResultSet> collect(std::ostream& os) override;

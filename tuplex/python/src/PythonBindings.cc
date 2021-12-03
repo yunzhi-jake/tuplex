@@ -59,6 +59,7 @@ PYMODULE {
             .def("unique", &tuplex::PythonDataSet::unique)
             .def("aggregate", &tuplex::PythonDataSet::aggregate)
             .def("aggregateByKey", &tuplex::PythonDataSet::aggregateByKey)
+            .def("groupBy", &tuplex::PythonDataSet::groupBy)
             .def("types", &tuplex::PythonDataSet::types)
             .def("exception_counts", &tuplex::PythonDataSet::exception_counts);
 

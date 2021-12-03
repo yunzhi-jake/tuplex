@@ -71,6 +71,7 @@ namespace tuplex {
 
         DataSet& aggregate(const UDF& aggCombine, const UDF& aggUDF, const Row& aggInitial) override { return *this; }
         DataSet& aggregateByKey(const UDF& aggCombine, const UDF& aggUDF, const Row& aggInitial, const std::vector<std::string> &keyColumns) override { return *this; }
+        DataSet& groupBy(const std::vector<size_t> &columnIndices) override { return *this; }
 
         DataSet &leftJoin(const DataSet &other, option<std::string> leftColumn, option<std::string> rightColumn,
                                   option<std::string> leftPrefix, option<std::string> leftSuffix,

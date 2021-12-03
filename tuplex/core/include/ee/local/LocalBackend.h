@@ -16,6 +16,7 @@
 #include <physical/TransformStage.h>
 #include <physical/HashJoinStage.h>
 #include <physical/AggregateStage.h>
+#include <physical/GroupByStage.h>
 #include <physical/BlockBasedTaskBuilder.h>
 #include <physical/IExceptionableTask.h>
 #include <numeric>
@@ -69,6 +70,7 @@ namespace tuplex {
         std::vector<IExecutorTask*> createLoadAndTransformToMemoryTasks(TransformStage* tstage, const ContextOptions& options,  codegen::read_block_f functor);
         void executeTransformStage(TransformStage* tstage);
 
+        void executeGroupByStage(GroupByStage* gbstage);
 
         /*!
          * Create the final hashmap from all of the input [tasks] (e.g. either merge them (join) or combine them (aggregate)

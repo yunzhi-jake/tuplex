@@ -110,6 +110,8 @@ namespace tuplex {
                                 const std::string& agg, const std::string& agg_pickled,
                                 const std::string& initial_value_pickled, boost::python::list columns);
 
+        PythonDataSet groupBy(boost::python::list columnsToGroupBy);
+
         // returns list of strings or empty list
         boost::python::list columns();
 
