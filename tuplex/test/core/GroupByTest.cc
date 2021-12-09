@@ -24,6 +24,6 @@ TEST_F(GroupByTest, GroupBy) {
 
     auto v1 = ds1.groupBy({0}).collectAsVector();
     ASSERT_EQ(v1.size(), 2);
-    EXPECT_EQ(v1[0].toPythonString(), "(1,2,[1,2])");
-    EXPECT_EQ(v1[1].toPythonString(), "(2,2,[3])");
+    EXPECT_EQ(v1[0].toPythonString(), "(1,[(2,1),(2,2)])");
+    EXPECT_EQ(v1[1].toPythonString(), "(2,[(2,3)])");
 }

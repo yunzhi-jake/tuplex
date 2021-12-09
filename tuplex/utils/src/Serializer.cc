@@ -620,8 +620,23 @@ namespace tuplex {
                     _varLenFields.movePtr(slen + 1);
                 }
             } else if (elementType.isTupleType()) {
-                if(elementType.isFixedSizeType()) {
+                for (size_t i = 0; i < l.numElements(); i++) {
+                    auto currTuple = Tuple(l.getField(i));
 
+                    // special case: empty tuple
+                    if (currTuple.numElements() == 0) {
+                        assert(currTuple.getType() == python::Type::EMPTYTUPLE);
+                        return *this;
+                    }
+
+                    auto tree = tupleToTree(currTuple);
+                    // add flattened fields
+                    for (const auto & index : tree.getMultiIndices()) {
+                        Field f = tree.get(index);
+                        // serialize field
+                        assert(!f.getType().isTupleType() || f.getType() == python::Type::EMPTYTUPLE);
+                        appendWithoutInference(f);
+                    }
                 }
             } else { // ints/floats/bools
                 // values
@@ -1090,15 +1105,8 @@ namespace tuplex {
                 }
             } else if (elType.isTupleType()) {
                 // read each tuple
-                if (elType.isFixedSizeType()) {
-                    for (int i = 0; i < num_elements; i++) {
-
-                        els.push_back(Field())
-                    }
-                } else {
-                    for (int i = 0; i < num_elements; i++) {
-                        auto
-                    }
+                for (int i = 0; i < num_elements; i++) {
+                    els.push_back(Field(getTuple()));
                 }
             } else {
                 // read each value

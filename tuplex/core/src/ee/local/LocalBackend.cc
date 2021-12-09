@@ -1229,6 +1229,7 @@ namespace tuplex {
             partition->unlock();
         }
 
+        // TODO: delete debug info
         for (const auto & currPair : groupByMap) {
             std::cout << currPair.first << std::endl;
         }
