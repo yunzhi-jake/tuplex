@@ -46,7 +46,7 @@ namespace tuplex {
         // init AWS SDK to get access to S3 filesystem
         auto aws_credentials = AWSCredentials::get();
         Timer timer;
-        bool aws_init_rc = initAWS(aws_credentials, options.AWS_REQUESTER_PAY());
+        bool aws_init_rc = initAWS(aws_credentials, options.AWS_NETWORK_SETTINGS(), options.AWS_REQUESTER_PAY());
         logger.debug("initialized AWS SDK in " + std::to_string(timer.time()) + "s");
 #endif
 
@@ -71,7 +71,8 @@ namespace tuplex {
                         throw std::runtime_error("Requesting Tuplex Lambda backend, but initialization failed.");
                 }
 
-                _ee = std::make_unique<AwsLambdaBackend>(AWSCredentials::get(), "tplxlam", options);
+                // @TODO: function name should come from options!
+                _ee = std::make_unique<AwsLambdaBackend>(AWSCredentials::get(), "tuplex-lambda-runner", options);
 #endif
                 break;
             }
@@ -84,6 +85,7 @@ namespace tuplex {
 
     // destructor needs to free memory of datasets!
     Context::~Context() {
+        using namespace std;
 
         if(!_datasets.empty())
             for(DataSet* ptr : _datasets) {

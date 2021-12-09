@@ -14,6 +14,7 @@
 #include <PythonException.h>
 #include <PythonContext.h>
 #include <PythonMetrics.h>
+#include <PythonCommon.h>
 
 using namespace boost::python;
 
@@ -86,4 +87,7 @@ PYMODULE {
 
     // global method to access default options as json
     def("getDefaultOptionsAsJSON", &tuplex::getDefaultOptionsAsJSON);
+
+    // global method to register a new logging function
+    def("registerLoggingCallback", &tuplex::registerPythonLoggingCallback);
 }
