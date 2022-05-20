@@ -1652,11 +1652,6 @@ namespace tuplex {
                         ptr += sizeof(uint64_t);
                     }
                 }
-            } else if (elType.isTupleType()) {
-                // read each tuple
-                for (int i = 0; i < num_elements; i++) {
-                    els.push_back(Field(getTuple()));
-                }
             } else {
                 Logger::instance().logger("deserializer").error(
                         "invalid list type: " + listType.desc() + " encountered, can't deserialize.");
