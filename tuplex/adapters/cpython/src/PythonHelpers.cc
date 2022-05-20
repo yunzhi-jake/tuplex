@@ -19,7 +19,6 @@
 #include <regex>
 
 #include <unordered_map>
-#include <boost/python.hpp>
 
 // module specific vars
 static std::unordered_map<std::string, PyObject*> cached_functions;
@@ -92,8 +91,6 @@ namespace python {
     }
 
     void handle_and_throw_py_error() {
-        using namespace boost::python;
-
         if(PyErr_Occurred()) {
             PyObject *ptype = NULL, *pvalue = NULL, *ptraceback = NULL;
             PyErr_Fetch(&ptype,&pvalue,&ptraceback);
@@ -101,21 +98,52 @@ namespace python {
 
             std::stringstream ss;
 
-            PyObject * extype, * value, * traceback;
+            PyObject *extype = nullptr, * value=nullptr, * traceback=nullptr;
             PyErr_Fetch(&extype, &value, &traceback);
             if (!extype)
                 throw std::runtime_error("could not obtain error");
+            if (!value)
+                throw std::runtime_error("could not obtain value");
+            if (!traceback)
+                throw std::runtime_error("could not obtain traceback");
+            // value and traceback may be nullptr (?)
 
-            object o_extype(handle<>(borrowed(extype)));
-            object o_value(handle<>(borrowed(value)));
-            object o_traceback(handle<>(borrowed(traceback)));
+            auto mod_traceback = PyImport_ImportModule("traceback");
+            if(!mod_traceback) {
+                PyErr_Clear();
+                throw std::runtime_error("failed to import internal traceback module");
+            }
 
-            object mod_traceback = import("traceback");
-            object lines = mod_traceback.attr("format_exception")(
-                    o_extype, o_value, o_traceback);
+            auto mod_traceback_dict = PyModule_GetDict(mod_traceback);
+            if(!mod_traceback_dict) {
+                PyErr_Clear();
+                throw std::runtime_error("failed to retrieve namespace dict from internal traceback module");
+            }
 
-            for (int i = 0; i < len(lines); ++i)
-                ss << extract<std::string>(lines[i])();
+            auto format_exception_func = PyObject_GetAttrString(mod_traceback_dict, "format_exception");
+            assert(PyCallable_Check(format_exception_func));
+
+            // call function, set all args
+            auto args = PyTuple_New(3);
+            PyTuple_SET_ITEM(args, 0, extype);
+            PyTuple_SET_ITEM(args, 1, value);
+            PyTuple_SET_ITEM(args, 2, traceback);
+
+            // get list object & convert to strings
+            auto lines_obj = PyObject_Call(format_exception_func, args, nullptr);
+            if(!mod_traceback_dict) {
+                PyErr_Clear();
+                throw std::runtime_error("failed to call format_exception from internal traceback module");
+            }
+            assert(PyList_Check(lines_obj));
+            auto line_count = PyList_Size(lines_obj);
+            for (unsigned i = 0; i < line_count; ++i) {
+                auto item = PyList_GET_ITEM(lines_obj, i);
+                Py_XINCREF(item);
+                auto line = PyString_AsString(item);
+                ss << line;
+            }
+            Py_XDECREF(lines_obj);
 
             throw std::runtime_error(ss.str());
         }
@@ -445,7 +473,7 @@ namespace python {
         return f;
     }
 
-    tuplex::Field pythonToField(PyObject* obj) {
+    tuplex::Field pythonToField(PyObject *obj, bool autoUpcast) {
         using namespace tuplex;
         using namespace std;
 
@@ -470,7 +498,7 @@ namespace python {
             vector<Field> v;
             v.reserve(numElements);
             for(unsigned i = 0; i < numElements; ++i) {
-                v.push_back(pythonToField(PyTuple_GetItem(obj, i)));
+                v.push_back(pythonToField(PyTuple_GetItem(obj, i), autoUpcast));
             }
             return Field(Tuple::from_vector(v));
         } else if(PyBool_Check(obj)) { // important to call this before isinstance long since isinstance also return long for bool
@@ -501,7 +529,7 @@ namespace python {
             if(PyDict_Size(obj) == 0)
                 return Field::empty_dict();
 
-            auto dictType = mapPythonClassToTuplexType(obj);
+            auto dictType = mapPythonClassToTuplexType(obj, autoUpcast);
             std::string dictStr;
             PyObject *key = nullptr, *val = nullptr;
             Py_ssize_t pos = 0;  // must be initialized to 0 to start iteration, however internal iterator variable. Don't use semantically.
@@ -509,7 +537,7 @@ namespace python {
             while(PyDict_Next(obj, &pos, &key, &val)) {
                 // create key
                 auto keyStr = PyString_AsString(PyObject_Str(key));
-                auto keyType = mapPythonClassToTuplexType(key);
+                auto keyType = mapPythonClassToTuplexType(key, autoUpcast);
                 python::Type valType;
 
                 // create value, mimicking cJSON printing standards
@@ -597,7 +625,7 @@ namespace python {
             vector<Field> v;
             v.reserve(numElements);
             for(unsigned i = 0; i < numElements; ++i) {
-                v.push_back(pythonToField(PyList_GET_ITEM(obj, i)));
+                v.push_back(pythonToField(PyList_GET_ITEM(obj, i), autoUpcast));
             }
             return Field(List::from_vector(v));
         } else if(obj == Py_None) {
@@ -632,9 +660,10 @@ namespace python {
      * converts object to field of specified type.
      * @param obj
      * @param type
+     * @param autoUpcast whether to upcast numeric types to a unified type when type conflicts, false by default
      * @return Field object
      */
-    tuplex::Field pythonToField(PyObject *obj, const python::Type &type) {
+    tuplex::Field pythonToField(PyObject *obj, const python::Type &type, bool autoUpcast=false) {
         assert(obj);
 
         // TODO: check assumptions about whether nonempty tuple can be an option
@@ -643,8 +672,15 @@ namespace python {
                 return tuplex::Field::null(type);
             } else {
                 tuplex::Field f;
-                f = pythonToField(obj);
-                f = fieldCastTo(f, type.getReturnType());
+                auto rtType = type.getReturnType();
+                if(rtType.isListType() || rtType.isTupleType()) {
+                    // type still needed to correctly construct field
+                    f = pythonToField(obj, rtType, autoUpcast);
+                } else {
+                    // simple types
+                    f = pythonToField(obj, autoUpcast);
+                    f = autoUpcast? fieldCastTo(f, type.getReturnType()) : f;
+                }
                 f.makeOptional();
                 return f;
             }
@@ -654,19 +690,30 @@ namespace python {
 
             std::vector<tuplex::Field> v;
             for(unsigned i = 0; i < numElements; ++i) {
-                v.push_back(pythonToField(PyTuple_GetItem(obj, i), type.parameters()[i]));
+                v.push_back(pythonToField(PyTuple_GetItem(obj, i), type.parameters()[i], autoUpcast));
             }
             return tuplex::Field(tuplex::Tuple::from_vector(v));
+        } else if(type.isListType() && type != python::Type::EMPTYLIST) {
+            auto numElements = PyList_Size(obj);
+            auto elementType = type.elementType();
+            std::vector<tuplex::Field> v;
+            v.reserve(numElements);
+            for(unsigned i = 0; i < numElements; ++i) {
+                auto currListItem = PyList_GetItem(obj, i);
+                v.push_back(pythonToField(currListItem, elementType, autoUpcast));
+                Py_IncRef(currListItem);
+            }
+            return tuplex::Field(tuplex::List::from_vector(v));
         } else {
-            auto f = pythonToField(obj);
-            return fieldCastTo(f, type);
+            auto f = pythonToField(obj, autoUpcast);
+            return autoUpcast? fieldCastTo(f, type) : f;
         }
     }
 
-    tuplex::Row pythonToRow(PyObject *obj, const python::Type &type) {
+    tuplex::Row pythonToRow(PyObject *obj, const python::Type &type, bool autoUpcast) {
         assert(obj);
 
-        tuplex::Field f = pythonToField(obj, type);
+        tuplex::Field f = pythonToField(obj, type, autoUpcast);
 
         // unpack the tuples one level
         if(f.getType().isTupleType() && f.getType() != python::Type::EMPTYTUPLE) {
@@ -1337,7 +1384,7 @@ namespace python {
     }
 
     // mapping type to internal types, unknown as default
-    python::Type mapPythonClassToTuplexType(PyObject *o) {
+    python::Type mapPythonClassToTuplexType(PyObject *o, bool autoUpcast) {
         if(Py_None == o)
             return python::Type::NULLVALUE;
 
@@ -1365,7 +1412,7 @@ namespace python {
             for(int j = 0; j < numElements; j++) {
                 auto item = PyTuple_GET_ITEM(o, j); // borrowed reference
                 assert(item->ob_refcnt > 0); // important!!!
-                elementTypes.push_back(mapPythonClassToTuplexType(item));
+                elementTypes.push_back(mapPythonClassToTuplexType(item, autoUpcast));
             }
             return python::TypeFactory::instance().createOrGetTupleType(elementTypes);
         }
@@ -1382,8 +1429,8 @@ namespace python {
             Py_ssize_t pos = 0; // must be initialized to 0 to start iteration, however internal iterator variable. Don't use semantically.
             bool types_set = false; // need extra var here b/c vals could be unknown.
             while(PyDict_Next(o, &pos, &key, &val)) {
-                auto curKeyType = mapPythonClassToTuplexType(key);
-                auto curValType = mapPythonClassToTuplexType(val);
+                auto curKeyType = mapPythonClassToTuplexType(key, autoUpcast);
+                auto curValType = mapPythonClassToTuplexType(val, autoUpcast);
                 if(!types_set) {
                     types_set = true;
                     keyType = curKeyType;
@@ -1403,13 +1450,18 @@ namespace python {
             if(numElements == 0)
                 return python::Type::EMPTYLIST;
 
-            python::Type elementType = mapPythonClassToTuplexType(PyList_GetItem(o, 0));
+            python::Type elementType = mapPythonClassToTuplexType(PyList_GetItem(o, 0), autoUpcast);
             // verify that all elements have the same type
             for(int j = 0; j < numElements; j++) {
-                if(elementType != mapPythonClassToTuplexType(PyList_GetItem(o, j))) {
-                    Logger::instance().defaultLogger().error("lists with variable type elements are not supported.");
-                    return python::Type::UNKNOWN;
-                    // TODO: the general case should return python::Type::PyObject in the future
+                python::Type currElementType = mapPythonClassToTuplexType(PyList_GetItem(o, j), autoUpcast);
+                if(elementType != currElementType) {
+                    // possible to use nullable type as element type?
+                    auto newElementType = unifyTypes(elementType, currElementType, autoUpcast);
+                    if (newElementType == python::Type::UNKNOWN) {
+                        Logger::instance().defaultLogger().error("list with variable element type " + elementType.desc() + " and " + currElementType.desc() + " not supported.");
+                        return python::Type::PYOBJECT;
+                    }
+                    elementType = newElementType;
                 }
             }
             return python::Type::makeListType(elementType);
@@ -1472,6 +1524,23 @@ namespace python {
             // typing.Optional[str] which is equal to typing.Union[str, NoneType]
             auto typing_optional = PyDict_GetItemString(typing_dict, "Optional");
             assert(typing_optional);
+            if (t.getReturnType().isTupleType()) {
+                // https://docs.python.org/3/library/typing.html#typing.Tuple
+#if (PY_MAJOR_VERSION >= 3 && PY_MINOR_VERSION >= 9)
+                // use builtin.tuple[...]
+                auto builtin_mod = PyImport_AddModule("builtins");
+                assert(builtin_mod);
+                auto builtin_dict = PyModule_GetDict(builtin_mod);
+                assert(builtin_dict);
+                auto tuple = PyDict_GetItemString(builtin_dict, "tuple");
+                tobj = PyObject_GetItem(tuple, tobj);
+#else
+                // use Tuple[...]
+                auto typing_tuple = PyDict_GetItemString(typing_dict, "Tuple");
+                assert(typing_tuple);
+                tobj = PyObject_GetItem(typing_tuple, tobj);
+#endif
+            }
             auto opt_type = PyObject_GetItem(typing_optional, tobj);
             return opt_type;
         }
