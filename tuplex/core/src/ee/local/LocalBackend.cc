@@ -1369,7 +1369,7 @@ namespace tuplex {
         newRowType.back() = valueType;
         auto newSchema = Schema(Schema::MemoryLayout::ROW, python::Type::makeTupleType(newRowType));
 
-        tuplex::PartitionWriter pw(executor, newSchema, gbstage->outputDataSetID(), _options.PARTITION_SIZE());
+        tuplex::PartitionWriter pw(executor, newSchema, gbstage->outputDataSetID(), gbstage->context().id(), _options.PARTITION_SIZE());
         for (const auto & currRowPair : groupByMap) {
             std::vector<Field> currRowVec = strToFieldMap[currRowPair.first];
             auto valueList = Field(List::from_vector(currRowPair.second));
